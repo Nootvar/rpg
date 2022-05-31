@@ -448,6 +448,7 @@ class Entity extends Square {
   constructor(
     id,
     type,
+    name,
     health,
     speed = 1,
     damage = 0,
@@ -456,6 +457,7 @@ class Entity extends Square {
     armor = null
   ) {
     super(id, type, false, true);
+    this.name = name;
     this.health = health;
     this.speed = speed;
     this.damage = damage;
@@ -467,6 +469,10 @@ class Entity extends Square {
   get attack() {
     if (this.hand && this.hand.damage) return this.hand.damage;
     return this.damage;
+  }
+
+  clearMovingData() {
+    this.movingData = { direction: null, addedDx: 0, addedDy: 0 };
   }
 
   applyDamage(damage) {
@@ -523,6 +529,7 @@ class Entity extends Square {
     return new Entity(
       json.id,
       json.type,
+      json.name,
       json.health,
       json.speed,
       json.damage,
@@ -535,7 +542,16 @@ class Entity extends Square {
 
 class Slime extends Entity {
   constructor(health = 3, speed = 0.5, damage = 1) {
-    super("slime", "Slime", health, speed, damage, null, new DroppedMoney(5));
+    super(
+      "slime",
+      "Slime",
+      "Slime",
+      health,
+      speed,
+      damage,
+      null,
+      new DroppedMoney(5)
+    );
   }
 
   get renderId() {
@@ -554,8 +570,11 @@ class Slime extends Entity {
         newCoordinates.x === gameInstance.player.currentX &&
         newCoordinates.y === gameInstance.player.currentY
       ) {
-        this.attacking = 64;
-        gameInstance.player.applyDamage(this.attack);
+        gameInstance.currentCombat = new Combat(
+          [gameInstance.player],
+          [this],
+          false
+        );
       } else if (!newSquare || newSquare.walkable) {
         this.move(direction, x, y);
       }
@@ -570,8 +589,8 @@ class Slime extends Entity {
 class Mount extends Entity {
   isMount = true;
 
-  constructor(id, type, health, speed) {
-    super(id, type, health, speed);
+  constructor(id, type, name, health, speed) {
+    super(id, type, name, health, speed);
     this.walkable = true;
     this.addedId = id.charAt(0).toUpperCase() + id.slice(1);
   }
@@ -581,13 +600,13 @@ class Mount extends Entity {
   }
 
   static fromJSON(json) {
-    return new Mount(json.id, json.type, json.health, json.speed);
+    return new Mount(json.id, json.type, json.name, json.health, json.speed);
   }
 }
 
 class Horse extends Mount {
   constructor() {
-    super("horse", "Mount", 20, 2);
+    super("horse", "Mount", "Horse", 20, 2);
   }
 }
 
@@ -886,7 +905,7 @@ class Player extends Entity {
     currentX = 0,
     currentY = 0
   ) {
-    super("player", "Player", health, speed, damage, new Sword());
+    super("player", "Player", "Player", health, speed, damage, new Sword());
     this.inventory = inventory;
     this.money = money;
     this.mount = mount;
@@ -1735,10 +1754,6 @@ class GameInstance {
     this.fpsCounter = new FPSCounter(this.fps);
   }
 
-  get currentMap() {
-    return this.maps[this.currentMapKey];
-  }
-
   pause() {
     clearInterval(this.logicIntervalId);
     this.logicIntervalId = null;
@@ -1778,6 +1793,15 @@ class GameInstance {
     this.camera.currentY = y;
     this.player.currentX = x;
     this.player.currentY = y;
+  }
+
+  get canMove() {
+    return (
+      !this.showInventory &&
+      !this.currentShop &&
+      !this.showQuests &&
+      !this.currentCombat
+    );
   }
 
   get isPaused() {
@@ -1827,6 +1851,97 @@ class Combat {
     this.allies = allies;
     this.enemies = enemies;
     this.isAlliesTurn = isAlliesTurn;
+
+    this.allies.forEach((ally) => ally.clearMovingData());
+    this.enemies.forEach((enemy) => enemy.clearMovingData());
+
+    let enemyName = enemies[0].name;
+    gameInstance.currentDialog = {
+      text: isAlliesTurn
+        ? `You attack a ${enemyName} !`
+        : `Ho no ! A sudden ${enemyName} attack !`,
+      next: isAlliesTurn ? "alliesAttack" : "enemiesAttack",
+    };
+  }
+
+  pickDialog(index) {
+    let currentDialog = gameInstance.currentDialog;
+    let option = currentDialog.options ? currentDialog.options[index] : null;
+    let key = currentDialog.next
+      ? currentDialog.next
+      : option
+      ? option.key
+      : null;
+
+    let damage = 0;
+    switch (key) {
+      case "alliesAttack":
+        gameInstance.currentDialog = {
+          text: "What are you doing ?",
+          options: [
+            { key: "attack", text: "Attack" },
+            { key: "flee", text: "Flee" },
+          ],
+        };
+        break;
+      case "flee":
+        let damage = this.enemies.reduce(
+          (previous, current) => previous + current.attack,
+          0
+        );
+        this.allies[0].applyDamage(damage);
+        gameInstance.currentDialog = {
+          text: `You flee but the enemies have time to deal ${damage} HP !`,
+          next: "end",
+        };
+        break;
+      case "attack":
+        damage = this.currentEntity.attack;
+        let enemy = this.enemies[0];
+        enemy.applyDamage(damage);
+
+        if (enemy.health <= 0) {
+          this.removeEntity(enemy);
+          applyToVisibleSquares((square, x, y) => {
+            if (square === enemy)
+              removeSquare({
+                x: x + gameInstance.camera.renderX,
+                y: y + gameInstance.camera.renderY,
+              });
+          });
+          let drop = enemy.drop;
+          if (drop) gameInstance.player.pick(drop);
+          gameInstance.currentDialog = {
+            text: `You dealt ${damage} HP and killed ${enemy.name} ! It dropped ${drop.name} !`,
+            next: this.enemies.length > 0 ? "enemiesAttack" : "won",
+          };
+        } else
+          gameInstance.currentDialog = {
+            text: `You dealt ${damage} HP !`,
+            next: "enemiesAttack",
+          };
+        this.endTurn();
+        break;
+      case "enemiesAttack":
+        damage = this.currentEntity.attack;
+        this.allies[0].applyDamage(damage);
+        gameInstance.currentDialog = {
+          text: `${this.currentEntity.name} dealt ${damage} HP !`,
+          next: "alliesAttack",
+        };
+        this.endTurn();
+        break;
+      case "won":
+        gameInstance.currentDialog = {
+          text: `You won this combat !`,
+          next: "end",
+        };
+        break;
+      case "end":
+        gameInstance.currentCombat = null;
+        gameInstance.currentDialog = null;
+        break;
+    }
   }
 
   get currentEntity() {
@@ -1855,6 +1970,15 @@ class Combat {
 
   get hasEnded() {
     return this.allies.length === 0 || this.enemies.length === 0;
+  }
+
+  render() {
+    this.allies.forEach((ally, index) => {
+      renderSquare(ally, 192 + index * 128, 128);
+    });
+    this.enemies.forEach((enemy, index) => {
+      renderSquare(enemy, 192 + index * 128, width - 192);
+    });
   }
 }
 
@@ -1940,11 +2064,10 @@ function action(direction) {
   if (nextSquare && !player.mount) {
     let health = nextSquare.health;
     if (health > 0) {
-      nextSquare.applyDamage(player.attack);
-      player.attacking = 32;
-      if (nextSquare.health <= 0 && nextSquare.drop)
-        replaceSquare(nextCoordinates, nextSquare.drop);
-      else if (nextSquare.health <= 0) removeSquare(nextCoordinates);
+      gameInstance.currentCombat = new Combat(
+        [gameInstance.player],
+        [nextSquare]
+      );
     }
 
     if (nextSquare.canBePicked) {
@@ -2035,6 +2158,8 @@ function pickDialog(index) {
   let lastInteractedSquare = gameInstance.lastInteractedSquare;
   if (lastInteractedSquare && lastInteractedSquare.chooseOption)
     lastInteractedSquare.chooseOption(index);
+  else if (gameInstance.currentCombat)
+    gameInstance.currentCombat.pickDialog(index);
 
   gameInstance.waitingForKeyUp = true;
 }
@@ -2245,18 +2370,12 @@ function getCoordinates(
 
 function render() {
   let player = gameInstance.player;
-  if (player.health > 0) {
-    for (let x = -1; x < renderingMaxX; x++) {
-      for (let y = -1; y < renderingMaxY; y++) {
-        renderCoordinates(gameInstance.currentSquares, x, y);
-      }
-    }
 
-    for (let x = -1; x < renderingMaxX; x++) {
-      for (let y = -1; y < renderingMaxY; y++) {
-        renderCoordinates(gameInstance.currentSquares, x, y, false);
-      }
-    }
+  renderFPS();
+
+  if (player.health > 0) {
+    if (gameInstance.currentCombat) renderCombatBackground();
+    else renderMapBackground();
 
     renderHud();
 
@@ -2265,11 +2384,33 @@ function render() {
     if (gameInstance.currentShop) renderShop();
     if (gameInstance.showQuests) renderQuests();
     if (gameInstance.isPaused) renderPause();
-
-    renderFPS();
   } else renderDeath();
 
   gameInstance.renderTick++;
+}
+
+function renderCombatBackground() {
+  for (let x = 0; x < maxX; x++) {
+    for (let y = 0; y < maxY; y++) {
+      drawSquare(gameInstance.mapHandler.defaultSquare, x * 64, y * 64);
+    }
+  }
+
+  gameInstance.currentCombat.render();
+}
+
+function renderMapBackground() {
+  for (let x = -1; x < renderingMaxX; x++) {
+    for (let y = -1; y < renderingMaxY; y++) {
+      renderCoordinates(gameInstance.currentSquares, x, y);
+    }
+  }
+
+  for (let x = -1; x < renderingMaxX; x++) {
+    for (let y = -1; y < renderingMaxY; y++) {
+      renderCoordinates(gameInstance.currentSquares, x, y, false);
+    }
+  }
 }
 
 function doTick() {
@@ -2279,53 +2420,33 @@ function doTick() {
   ) {
     switch (gameInstance.keydown) {
       case "z":
-        if (
-          !gameInstance.showInventory &&
-          !gameInstance.currentShop &&
-          !gameInstance.showQuests
-        )
-          action("up");
+        if (gameInstance.canMove) action("up");
         break;
       case "s":
-        if (
-          !gameInstance.showInventory &&
-          !gameInstance.currentShop &&
-          !gameInstance.showQuests
-        )
-          action("down");
+        if (gameInstance.canMove) action("down");
         break;
       case "q":
-        if (
-          !gameInstance.showInventory &&
-          !gameInstance.currentShop &&
-          !gameInstance.showQuests
-        )
-          action("left");
+        if (gameInstance.canMove) action("left");
         else if (gameInstance.showInventory) {
           gameInstance.player.inventory.selectPrevious();
           gameInstance.waitingForKeyUp = true;
         } else if (gameInstance.showQuests) {
           gameInstance.questHandler.selectPrevious();
           gameInstance.waitingForKeyUp = true;
-        } else {
+        } else if (gameInstance.currentShop) {
           gameInstance.currentShop.selectPrevious();
           gameInstance.waitingForKeyUp = true;
         }
         break;
       case "d":
-        if (
-          !gameInstance.showInventory &&
-          !gameInstance.currentShop &&
-          !gameInstance.showQuests
-        )
-          action("right");
+        if (gameInstance.canMove) action("right");
         else if (gameInstance.showInventory) {
           gameInstance.player.inventory.selectNext();
           gameInstance.waitingForKeyUp = true;
         } else if (gameInstance.showQuests) {
           gameInstance.questHandler.selectNext();
           gameInstance.waitingForKeyUp = true;
-        } else {
+        } else if (gameInstance.currentShop) {
           gameInstance.currentShop.selectNext();
           gameInstance.waitingForKeyUp = true;
         }
@@ -2407,7 +2528,7 @@ function doTick() {
     if (square) {
       square.update();
 
-      if (gameInstance.tick % 256 === 0)
+      if (!gameInstance.currentCombat && gameInstance.tick % 256 === 0)
         square.autoAction(
           x + gameInstance.camera.renderX,
           y + gameInstance.camera.renderY
