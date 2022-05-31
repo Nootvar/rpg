@@ -57,6 +57,15 @@ class Square {
 
   autoAction() {}
 
+  render(dx, dy) {
+    if (this.movingData) {
+      dx += this.movingData.addedDx;
+      dy += this.movingData.addedDy;
+    }
+
+    drawSquare(this.renderId, dx, dy, this.height, this.width);
+  }
+
   static fromJSON(json) {
     return new Square(
       json.id,
@@ -67,6 +76,12 @@ class Square {
       json.width,
       json.coordinates
     );
+  }
+}
+
+class Grass extends Square {
+  constructor(variant = "") {
+    super("grass" + variant, "Square");
   }
 }
 
@@ -379,12 +394,11 @@ class VillageShopOwner extends ShopOwner {
 }
 
 class MapAccessSquare extends Square {
-  constructor(id, type, mapKey, newX, newY, defaultSquare = "grass") {
+  constructor(id, type, mapKey, newX, newY) {
     super(id, type, false);
     this.mapKey = mapKey;
     this.newX = newX;
     this.newY = newY;
-    this.defaultSquare = defaultSquare;
   }
 
   action(currentCoordinates, nextCoordinates) {
@@ -398,8 +412,7 @@ class MapAccessSquare extends Square {
       json.type,
       json.mapKey,
       json.newX,
-      json.newY,
-      json.defaultSquare
+      json.newY
     );
   }
 }
@@ -482,7 +495,12 @@ class Entity extends Square {
     this.damaged = 16;
   }
 
-  postRender(dx, dy, showHealth = true) {
+  render(dx, dy, showHealth = true) {
+    super.render(dx, dy);
+
+    dx += this.movingData.addedDx;
+    dy += this.movingData.addedDy;
+
     if (this.armor) draw(this.armor.id, dx, dy);
 
     if (showHealth)
@@ -595,8 +613,8 @@ class Mount extends Entity {
     this.addedId = id.charAt(0).toUpperCase() + id.slice(1);
   }
 
-  postRender(dx, dy) {
-    super.postRender(dx, dy, false);
+  render(dx, dy) {
+    super.render(dx, dy, false);
   }
 
   static fromJSON(json) {
@@ -845,6 +863,33 @@ class Inventory {
     return this.items.findIndex((item) => item.id === itemId) > -1;
   }
 
+  render() {
+    context.fillStyle = "white";
+    context.fillRect(128, 128, width - 256, 256);
+
+    let text = "Inventory";
+    let selectedItem = this.getSelected();
+    if (selectedItem) {
+      text += ` - ${selectedItem.name}`;
+      context.fillStyle = "black";
+      context.font = fonts.small;
+      context.fillText(selectedItem.description, 132, 168);
+    }
+
+    context.fillStyle = "black";
+    context.font = fonts.medium;
+    context.fillText(text, 132, 128 + 24);
+
+    this.items.forEach((item, index) => {
+      if (index === this.selectedIndex && gameInstance.tick % 128 < 64) {
+        context.fillStyle = "lightgrey";
+        context.fillRect(128 + index * 32, 128 + 48, item.height, item.width);
+      }
+
+      draw(item.id, 128 + 48, 128 + index * 32, item.height, item.width);
+    });
+  }
+
   static fromJSON(json) {
     return new Inventory(json.items.map((item) => squareFromJSON(item)));
   }
@@ -884,6 +929,47 @@ class ShopInventory {
 
   getSelected() {
     return this.items[this.selectedIndex];
+  }
+
+  render() {
+    context.fillStyle = "white";
+    context.fillRect(128, 128, width - 256, 256);
+
+    let text = this.name;
+    let selectedItem = this.getSelected();
+    if (selectedItem) {
+      text += ` - ${selectedItem.item.name}`;
+      context.fillStyle = "black";
+      context.font = fonts.small;
+      context.fillText(
+        `Cost ${selectedItem.price} - ${selectedItem.item.description}`,
+        132,
+        168
+      );
+    }
+
+    context.fillStyle = "black";
+    context.font = fonts.medium;
+    context.fillText(text, 132, 128 + 24);
+
+    this.items.forEach((shopItem, index) => {
+      if (index === this.selectedIndex && gameInstance.tick % 128 < 64) {
+        context.fillStyle = "lightgrey";
+        context.fillRect(
+          128 + index * 32,
+          128 + 48,
+          shopItem.item.height,
+          shopItem.item.width
+        );
+      }
+      draw(
+        shopItem.item.id,
+        128 + 48,
+        128 + index * 32,
+        shopItem.item.height,
+        shopItem.item.width
+      );
+    });
   }
 
   static fromJSON(json) {
@@ -971,8 +1057,8 @@ class Player extends Entity {
     this.currentY = newCoordinates.y;
   }
 
-  postRender(dx, dy) {
-    super.postRender(dx, dy, false);
+  render(dx, dy) {
+    super.render(dx, dy, false);
   }
 
   static fromJSON(json) {
@@ -1081,6 +1167,57 @@ class QuestHandler {
     }
   }
 
+  render() {
+    context.fillStyle = "white";
+    context.fillRect(128, 128, width - 256, height - 265);
+
+    let text = "Quests";
+    let currentQuest = gameInstance.questHandler.getCurrent();
+    let currentHeight = 164;
+    if (currentQuest) {
+      text += ` - Current : ${currentQuest.name}`;
+
+      context.fillStyle = "black";
+      context.font = fonts.small;
+      let splittedText = splitForWidth(currentQuest.description, width - 266);
+      splittedText.forEach((line) => {
+        context.fillText(line, 138, currentHeight + 14);
+        currentHeight += 16;
+      });
+      currentHeight += 12;
+    }
+
+    context.fillStyle = "black";
+    context.font = fonts.medium;
+    context.fillText(text, 132, 128 + 24);
+
+    Object.keys(gameInstance.questHandler.quests).forEach((key, index) => {
+      let quest = gameInstance.questHandler.quests[key];
+
+      if (
+        index === gameInstance.questHandler.selectedQuestIndex &&
+        gameInstance.tick % 128 < 64
+      ) {
+        context.fillStyle = "lightgrey";
+        context.fillRect(128, currentHeight + 5, width - 256, 24);
+      }
+
+      context.fillStyle = "black";
+      context.font = fonts.medium;
+      context.fillText(quest.name, 132, currentHeight + 24);
+      currentHeight += 32;
+
+      context.fillStyle = "black";
+      context.font = fonts.small;
+      let splittedText = splitForWidth(quest.description, width - 266);
+      splittedText.forEach((line) => {
+        context.fillText(line, 138, currentHeight + 14);
+        currentHeight += 16;
+      });
+      currentHeight += 6;
+    });
+  }
+
   static fromJSON(json) {
     return new QuestHandler(
       Object.keys(json.quests).map((key) => Quest.fromJSON(json.quests[key])),
@@ -1089,10 +1226,10 @@ class QuestHandler {
   }
 }
 
-class Map {
-  constructor(squares, defaultSquare = "grass") {
+class GameMap {
+  constructor(squares, defaultSquares = [new Grass(), new Grass("1")]) {
     this.squares = squares;
-    this.defaultSquare = defaultSquare;
+    this.defaultSquares = defaultSquares;
   }
 
   initialize(player) {
@@ -1119,7 +1256,10 @@ class Map {
     for (let x = 0; x < squares.length; x++)
       for (let y = 0; y < squares[x].length; y++)
         squares[x][y] = squares[x][y].map((layer) => squareFromJSON(layer));
-    return new Map(squares, json.defaultSquare);
+    let defaultSquares = json.defaultSquares.map((defaultSquare) =>
+      squareFromJSON(defaultSquare)
+    );
+    return new GameMap(squares, defaultSquares);
   }
 }
 
@@ -1133,8 +1273,8 @@ class MapHandler {
     return this.maps[this.currentMapKey].squares;
   }
 
-  get defaultSquare() {
-    return this.maps[this.currentMapKey].defaultSquare;
+  get defaultSquares() {
+    return this.maps[this.currentMapKey].defaultSquares;
   }
 
   initialize(player) {
@@ -1143,14 +1283,16 @@ class MapHandler {
 
   static fromJSON(json) {
     let maps = json.maps;
-    Object.keys(maps).forEach((key) => (maps[key] = Map.fromJSON(maps[key])));
+    Object.keys(maps).forEach(
+      (key) => (maps[key] = GameMap.fromJSON(maps[key]))
+    );
     return new MapHandler(maps, json.currentMapKey);
   }
 }
 
 let defaultMaps = {};
 
-defaultMaps.houseMap = new Map([
+defaultMaps.houseMap = new GameMap([
   [
     new Wall(),
     new Wall(),
@@ -1207,7 +1349,7 @@ defaultMaps.houseMap = new Map([
   ],
 ]);
 
-defaultMaps.villageShopMap = new Map([
+defaultMaps.villageShopMap = new GameMap([
   [
     new Wall(),
     new Wall(),
@@ -1264,7 +1406,7 @@ defaultMaps.villageShopMap = new Map([
   ],
 ]);
 
-defaultMaps.caveMap = new Map(
+defaultMaps.caveMap = new GameMap(
   [
     [
       new Rock(),
@@ -1323,10 +1465,10 @@ defaultMaps.caveMap = new Map(
     [null, null, new Rock(), new CaveFloor(), new Rock()],
     [null, null, new Rock(), new CaveExit(), new Rock()],
   ],
-  "rock"
+  [new Rock()]
 );
 
-defaultMaps.map = new Map([
+defaultMaps.map = new GameMap([
   [
     null,
     null,
@@ -1735,6 +1877,7 @@ class GameInstance {
 
   showQuests = false;
   showInventory = false;
+  showMinimap = false;
 
   tick = 0;
   renderTick = 0;
@@ -1781,8 +1924,8 @@ class GameInstance {
     return this.mapHandler.currentMapSquares;
   }
 
-  get defaultSquare() {
-    return this.mapHandler.defaultSquare;
+  get defaultSquares() {
+    return this.mapHandler.defaultSquares;
   }
 
   goToMap(mapKey, x = 0, y = 0) {
@@ -1842,6 +1985,12 @@ class FPSCounter {
     clearInterval(this.counterIntervalId);
     this.counterIntervalId = null;
   }
+
+  render() {
+    context.fillStyle = "black";
+    context.font = fonts.small;
+    context.fillText(`${this.fps} FPS`, 0, 14);
+  }
 }
 
 class Combat {
@@ -1885,7 +2034,7 @@ class Combat {
         };
         break;
       case "flee":
-        let damage = this.enemies.reduce(
+        damage = this.enemies.reduce(
           (previous, current) => previous + current.attack,
           0
         );
@@ -1974,10 +2123,10 @@ class Combat {
 
   render() {
     this.allies.forEach((ally, index) => {
-      renderSquare(ally, 192 + index * 128, 128);
+      ally.render(192 + index * 128, 128);
     });
     this.enemies.forEach((enemy, index) => {
-      renderSquare(enemy, 192 + index * 128, width - 192);
+      enemy.render(192 + index * 128, width - 192);
     });
   }
 }
@@ -2181,7 +2330,9 @@ function getSessionRandomInteger(max) {
 }
 
 function getCoordinatesRandomInteger(max, x, y) {
-  return (((Math.tan(x) * seed) / Math.cos(y)) * x) % (max + 1);
+  return (
+    Math.abs(Math.round(((Math.tan(x) * seed) / Math.cos(y)) * x)) % (max + 1)
+  );
 }
 
 function saveFile(filename, data) {
@@ -2368,51 +2519,6 @@ function getCoordinates(
   return { x: x, y: y };
 }
 
-function render() {
-  let player = gameInstance.player;
-
-  renderFPS();
-
-  if (player.health > 0) {
-    if (gameInstance.currentCombat) renderCombatBackground();
-    else renderMapBackground();
-
-    renderHud();
-
-    if (gameInstance.currentDialog) renderDialog(gameInstance.currentDialog);
-    if (gameInstance.showInventory) renderInventory();
-    if (gameInstance.currentShop) renderShop();
-    if (gameInstance.showQuests) renderQuests();
-    if (gameInstance.isPaused) renderPause();
-  } else renderDeath();
-
-  gameInstance.renderTick++;
-}
-
-function renderCombatBackground() {
-  for (let x = 0; x < maxX; x++) {
-    for (let y = 0; y < maxY; y++) {
-      drawSquare(gameInstance.mapHandler.defaultSquare, x * 64, y * 64);
-    }
-  }
-
-  gameInstance.currentCombat.render();
-}
-
-function renderMapBackground() {
-  for (let x = -1; x < renderingMaxX; x++) {
-    for (let y = -1; y < renderingMaxY; y++) {
-      renderCoordinates(gameInstance.currentSquares, x, y);
-    }
-  }
-
-  for (let x = -1; x < renderingMaxX; x++) {
-    for (let y = -1; y < renderingMaxY; y++) {
-      renderCoordinates(gameInstance.currentSquares, x, y, false);
-    }
-  }
-}
-
 function doTick() {
   if (
     !gameInstance.waitingForKeyUp &&
@@ -2506,6 +2612,8 @@ function doTick() {
         if (currentSquare && currentSquare.isMount) {
           removeSquare(currentCoordinates, true);
           gameInstance.player.climb(currentSquare);
+        } else {
+          gameInstance.showMinimap = !gameInstance.showMinimap;
         }
         gameInstance.waitingForKeyUp = true;
         break;
@@ -2513,6 +2621,7 @@ function doTick() {
         gameInstance.showInventory = false;
         gameInstance.currentShop = null;
         gameInstance.showQuests = false;
+        gameInstance.showMinimap = false;
         gameInstance.player.dismount();
         break;
     }
@@ -2541,6 +2650,52 @@ function doTick() {
   gameInstance.tick++;
 }
 
+function render() {
+  let player = gameInstance.player;
+
+  if (player.health > 0) {
+    if (gameInstance.currentCombat) renderCombatBackground();
+    else renderMapBackground();
+
+    renderHud();
+
+    if (gameInstance.currentDialog) renderDialog(gameInstance.currentDialog);
+    if (gameInstance.showInventory) gameInstance.player.inventory.render();
+    if (gameInstance.currentShop) gameInstance.currentShop.render();
+    if (gameInstance.showQuests) gameInstance.questHandler.render();
+    if (gameInstance.showMinimap) renderMinimap();
+    if (gameInstance.isPaused) renderPause();
+  } else renderDeath();
+
+  gameInstance.fpsCounter.render();
+
+  gameInstance.renderTick++;
+}
+
+function renderCombatBackground() {
+  for (let x = 0; x < maxX; x++) {
+    for (let y = 0; y < maxY; y++) {
+      gameInstance.defaultSquares[0].render(x * 64, y * 64);
+    }
+  }
+
+  gameInstance.currentCombat.render();
+}
+
+function renderMapBackground() {
+  for (let x = -1; x < renderingMaxX; x++) {
+    for (let y = -1; y < renderingMaxY; y++) {
+      renderCoordinates(gameInstance.currentSquares, x, y);
+    }
+  }
+
+  for (let x = -1; x < renderingMaxX; x++) {
+    for (let y = -1; y < renderingMaxY; y++) {
+      renderCoordinates(gameInstance.currentSquares, x, y, false);
+    }
+  }
+}
+
 function renderCoordinates(currentMap, x, y, background = true) {
   let square = [];
   if (
@@ -2559,37 +2714,22 @@ function renderCoordinates(currentMap, x, y, background = true) {
     background &&
     ((square.length > 0 && square[0].transparent) || square.length === 0)
   ) {
-    let defaultSquare = gameInstance.defaultSquare;
-    if (
-      defaultSquare === "grass" &&
-      getCoordinatesRandomInteger(
-        1,
-        x + gameInstance.camera.renderX,
-        y + gameInstance.camera.renderY
-      ) === 1
-    )
-      defaultSquare = "grass1";
-    renderSquare({ renderId: defaultSquare }, dx + addedDx, dy + addedDy);
+    let defaultSquares = gameInstance.defaultSquares;
+    let defaultSquareIndex = getCoordinatesRandomInteger(
+      defaultSquares.length - 1,
+      x + gameInstance.camera.renderX,
+      y + gameInstance.camera.renderY
+    );
+    defaultSquares[defaultSquareIndex].render(dx + addedDx, dy + addedDy);
   }
   if (background && square.length > 0)
     square.forEach((layer) => {
-      if (!layer.movingData) renderSquare(layer, dx + addedDx, dy + addedDy);
+      if (!layer.movingData) layer.render(dx + addedDx, dy + addedDy);
     });
   else if (square.length > 0)
     square.forEach((layer) => {
-      if (layer.movingData) renderSquare(layer, dx + addedDx, dy + addedDy);
+      if (layer.movingData) layer.render(dx + addedDx, dy + addedDy);
     });
-}
-
-function renderSquare(square, dx, dy) {
-  if (square.movingData) {
-    dx += square.movingData.addedDx;
-    dy += square.movingData.addedDy;
-  }
-
-  drawSquare(square.renderId, dx, dy, square.height, square.width);
-
-  if (square && square.postRender) square.postRender(dx, dy);
 }
 
 function drawSquare(id, dx, dy, height = 64, width = 64) {
@@ -2633,129 +2773,6 @@ function renderHud() {
   context.fillStyle = "black";
   context.font = fonts.medium;
   context.fillText(`Money : ${player.money}`, 440 + 1, 16 + 24);
-}
-
-function renderInventory() {
-  context.fillStyle = "white";
-  context.fillRect(128, 128, width - 256, 256);
-
-  let text = "Inventory";
-  let selectedItem = gameInstance.player.inventory.getSelected();
-  if (selectedItem) {
-    text += ` - ${selectedItem.name}`;
-    context.fillStyle = "black";
-    context.font = fonts.small;
-    context.fillText(selectedItem.description, 132, 168);
-  }
-
-  context.fillStyle = "black";
-  context.font = fonts.medium;
-  context.fillText(text, 132, 128 + 24);
-
-  gameInstance.player.inventory.items.forEach((item, index) => {
-    if (
-      index === gameInstance.player.inventory.selectedIndex &&
-      gameInstance.tick % 128 < 64
-    ) {
-      context.fillStyle = "lightgrey";
-      context.fillRect(128 + index * 32, 128 + 48, item.height, item.width);
-    }
-
-    draw(item.id, 128 + 48, 128 + index * 32, item.height, item.width);
-  });
-}
-
-function renderShop() {
-  let currentShop = gameInstance.currentShop;
-  context.fillStyle = "white";
-  context.fillRect(128, 128, width - 256, 256);
-
-  let text = currentShop.name;
-  let selectedItem = currentShop.getSelected();
-  if (selectedItem) {
-    text += ` - ${selectedItem.item.name}`;
-    context.fillStyle = "black";
-    context.font = fonts.small;
-    context.fillText(
-      `Cost ${selectedItem.price} - ${selectedItem.item.description}`,
-      132,
-      168
-    );
-  }
-
-  context.fillStyle = "black";
-  context.font = fonts.medium;
-  context.fillText(text, 132, 128 + 24);
-
-  currentShop.items.forEach((shopItem, index) => {
-    if (index === currentShop.selectedIndex && gameInstance.tick % 128 < 64) {
-      context.fillStyle = "lightgrey";
-      context.fillRect(
-        128 + index * 32,
-        128 + 48,
-        shopItem.item.height,
-        shopItem.item.width
-      );
-    }
-    draw(
-      shopItem.item.id,
-      128 + 48,
-      128 + index * 32,
-      shopItem.item.height,
-      shopItem.item.width
-    );
-  });
-}
-
-function renderQuests() {
-  context.fillStyle = "white";
-  context.fillRect(128, 128, width - 256, height - 265);
-
-  let text = "Quests";
-  let currentQuest = gameInstance.questHandler.getCurrent();
-  let currentHeight = 164;
-  if (currentQuest) {
-    text += ` - Current : ${currentQuest.name}`;
-
-    context.fillStyle = "black";
-    context.font = fonts.small;
-    let splittedText = splitForWidth(currentQuest.description, width - 266);
-    splittedText.forEach((line) => {
-      context.fillText(line, 138, currentHeight + 14);
-      currentHeight += 16;
-    });
-    currentHeight += 12;
-  }
-
-  context.fillStyle = "black";
-  context.font = fonts.medium;
-  context.fillText(text, 132, 128 + 24);
-
-  Object.keys(gameInstance.questHandler.quests).forEach((key, index) => {
-    let quest = gameInstance.questHandler.quests[key];
-
-    if (
-      index === gameInstance.questHandler.selectedQuestIndex &&
-      gameInstance.tick % 128 < 64
-    ) {
-      context.fillStyle = "lightgrey";
-      context.fillRect(128, currentHeight + 5, width - 256, 24);
-    }
-
-    context.fillStyle = "black";
-    context.font = fonts.medium;
-    context.fillText(quest.name, 132, currentHeight + 24);
-    currentHeight += 32;
-
-    context.fillStyle = "black";
-    context.font = fonts.small;
-    let splittedText = splitForWidth(quest.description, width - 266);
-    splittedText.forEach((line) => {
-      context.fillText(line, 138, currentHeight + 14);
-      currentHeight += 16;
-    });
-    currentHeight += 6;
-  });
 }
 
 function renderPause() {
@@ -2802,21 +2819,24 @@ function renderDeath() {
   context.fillText(deathMessage, halfWidth - messageWidth / 2, halfHeight);
 }
 
-function renderMap() {
-  context.fillStyle = "white";
-  context.fillRect(128, 128, width - 256, 256);
-
+function renderMinimap() {
   let square,
-    squares = gameInstance.currentSquares;
+    squares = gameInstance.currentSquares,
+    maxLength = 0;
+  squares.forEach((square) => (maxLength = Math.max(maxLength, square.length)));
+
+  context.fillStyle = "white";
+  context.fillRect(128, 128, width - 256, squares.length * 8 + 8);
+
   for (let x = 0; x < squares.length; x++) {
-    for (let y = 0; y < squares[x].length; y++) {
+    for (let y = 0; y < maxLength; y++) {
       square = squares[x][y];
       if (
         square &&
         square.length > 0 &&
         square[square.length - 1].transparent
       ) {
-        draw("grass", 132 + x * 8, 132 + y * 8, 8, 8);
+        draw(gameInstance.defaultSquares[0].id, 132 + x * 8, 132 + y * 8, 8, 8);
         square.forEach((layer) =>
           draw(layer.id, 132 + x * 8, 132 + y * 8, 8, 8)
         );
@@ -2824,15 +2844,10 @@ function renderMap() {
         square.forEach((layer) =>
           draw(layer.id, 132 + x * 8, 132 + y * 8, 8, 8)
         );
-      else draw("grass", 132 + x * 8, 132 + y * 8, 8, 8);
+      else
+        draw(gameInstance.defaultSquares[0].id, 132 + x * 8, 132 + y * 8, 8, 8);
     }
   }
-}
-
-function renderFPS() {
-  context.fillStyle = "black";
-  context.font = fonts.small;
-  context.fillText(`${gameInstance.fpsCounter.fps} FPS`, 0, 14);
 }
 
 function main() {
